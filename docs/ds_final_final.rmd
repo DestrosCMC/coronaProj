@@ -1,0 +1,370 @@
+---
+title: "DS Final Project"
+author: "Kieran Daly"
+date: "Due December 14 2021"
+output: 
+  html_document: default
+---
+
+# **Part 1: Introduction**  
+
+---  
+
+### *Topic*  
+
+The topic of my final project is the ongoing Coronavirus pandemic in California. This project is very topical because of the impact the virus is currently having on the world and on California. By examining a dataset from the Los Angeles Times, I hope to find meaningful insights about the effects of the virus across different areas of California, institutions, and times of year. The questions that I am asking are as follows.
+
+### *Questions & Answers*   
+  
+
+1. How have vaccinations impacted hospitalizations in California as a whole?   
+2. Do the counties most severely impacted by COVID-19 share any characteristics or have any opposite characteristics?  
+3. How did nursing homes fare compared to the rest of the state?  
+
+  
+# **Part 2: Data Source**  
+
+---   
+
+The data source that I am using is The Los Angeles Times' open-source archive of California Coronavirus data.  The landing page is on github and the link is [here](https://github.com/datadesk/california-coronavirus-data). State and county totals come from the California Department of Public Health. Data on hospitalizations, tests, demographics and reopening plans also come from the state health department. The nursing home totals, including skilled-nursing facilities and assisted-living facilities, are monitored by the California Department of Social Services. The numbers are gathered and posted each day. 
+
+
+
+# **Part 3: Ethics Reflection**
+  
+---    
+
+There should not be any ethical issues related to how the data was gathered. The LA Times Coronavirus tracker details that almost all of the data comes from the California Department of Public Health. The figures for nursing homes are monitored by the California Department of Social Services. The data does not seem to have any ethical issues with its collection because it was carried out by these two government entities. It is highly likely that these entities include all of California in their data and do not systematically exclude any groups. The data figures are also not scraped from anywhere, which could cause potential legal or moral complications, but are taken directly from the hospitals.  
+
+No ethical issues should arise from the analysis. The analysis mostly focuses on the state as a whole, and when it is on a more local level, by county. The analysis looks mainly for trends of how the cases and deaths in the state have evolved over time and as a result of vaccinations. The only issue that could possibly arise is that the county level analysis could have bias based on the demographics of people that live there. However, the main purpose of a county level is to examine geographical impact, not the social one.  
+
+The dataset that I am using is already public on github and contains aggregate totals for cases and deaths. This is great because the data contains no individual data, which could possibly be used to identify specific people.
+
+
+# **Part 4: Data Import**  
+
+---   
+
+### **Libraries**  
+
+The libraries used for this report are tidyverse, modelr, rjson, and plotly. Tidyverse is mainly used because of the read_csv() function, tibbles, and pipes. modelr is very useful because of the modelling capabilities that the library brings to the data. Plotly and rjson are used for their data visualization power, which includes a mapbox choropleth map that I will create in this report.  
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(modelr)
+library(rjson)
+library(plotly)
+```
+
+### **Reading Data**  
+
+The data for this project comes from csvs posted on the LA Times' Coronavirus github repository. There are three sets of data imports for each of the three questions that we are trying to answer. The only function that is used is read_csv(), which takes the path to the csv (or link to a csv in this case) and returns the csv as a tibble.   
+
+
+#### **Question: How have vaccinations impacted hospitalizations in California as a whole?**  
+
+```{r,results='hide', message=FALSE}
+state_vax <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-vaccination-state-totals.csv")
+state_hospital <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-hospital-patient-state-totals.csv")
+state_deaths <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-state-cases-deaths.csv")
+```
+
+
+#### **Question: Do the counties most severely impacted by Covid-19 share any characteristics or have any opposite characteristics?**  
+
+```{r,results='hide', message=FALSE}
+county_vax <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-vaccination-county-by-age.csv")
+county_hospital <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-hospital-patient-county-totals.csv")
+county_deaths <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-county-cases-deaths.csv")
+```
+
+
+#### **Question: How did nursing homes fare compared to the rest of the state?**  
+
+```{r,results='hide', message=FALSE}
+nursing_totals <- read_csv("https://raw.githubusercontent.com/datadesk/california-coronavirus-data/master/cdph-skilled-nursing-totals.csv")
+```
+
+# **Part 5: Data Cleaning and Tidying**  
+  
+---    
+
+### **How have vaccinations impacted hospitalizations in California as a whole?**
+
+The data that is read into R contains more columns than are needed for the question we are trying to answer. In the first line, we use select() to choose the 5 columns that we will use for our analysis. The state_vax table with 5 columns is stored as state_vax1. The state_vax table has fewer entries than the state_hospital table, so it is necessary to use filter() to start both tables' "date" columns on the same date. The filtered state_hospital table is stored as state_hospital1.  The third line left joins state_vax1 to state_hospital1 by the "date" column and stores the resulting tibble as joined_1. The fourth line performs multiple transformations to joined_1. First, it sorts the table by the date column, creates a new variable that is the change in new patients that are positive with COVID, and selects only the 5 columns that are needed for this analysis.
+
+```{r, warning=FALSE}
+
+state_vax1 <- state_vax %>% select("date", "doses_administered", "new_doses_administered", "at_least_one_dose_percent", "fully_vaccinated_percent")
+
+#Chose 2020-07-27 because that is the first date in state_vax.
+state_hospital1 <- state_hospital %>% filter(date >= "2020-07-27")
+
+
+joined_1 <- state_hospital1 %>% left_join(state_vax1, by = "date")
+
+joined_2 <- joined_1 %>% arrange(date) %>% mutate(new_patients = positive_patients - lag(positive_patients)) %>% select(date, positive_patients, new_patients, new_doses_administered,fully_vaccinated_percent)
+```
+
+The below code chunk creates a season indicator variable. This is done by mainly using logic to assign the indicator if the date is less than the nearest solstice or equinox.  
+
+```{r}
+joined_2$season <- ifelse(joined_2$date <= as.Date("2020-09-22", "%Y-%m-%d"), "Summer", ifelse(joined_2$date <= as.Date("2020-12-21", "%Y-%m-%d"), "Autumn", ifelse(joined_2$date <= as.Date("2021-03-21", "%Y-%m-%d"), "Winter", ifelse(joined_2$date <= as.Date("2021-06-21", "%Y-%m-%d"), "Spring", ifelse(joined_2$date <= as.Date("2021-09-22", "%Y-%m-%d"), "Summer", ifelse(joined_2$date <= as.Date("2021-12-21", "%Y-%m-%d"), "Autumn", 0))))))
+joined_2
+```
+
+
+### **Do the counties most severely impacted by COVID-19 share any characteristics or have any opposite characteristics?**  
+
+The data for the counties is in the county_deaths tibble. The first line of code sets a variable called date_var equal to December 8th 2021. This sets the date that will be used for the COVID data snapshot as a static date. It is possible to use Sys.Date() to get the current date and have dashboards that update as frequently as the github csvs, but weekends and holidays can cause problems in the data table (the entry for the day will not exist). The second line of code only keeps the entries for the date being the same as date_var and also calculates the death rate from COVID 19 in each county. Then it arranges the counties by death rate. 
+
+```{r}
+#date_var <- Sys.Date() - 1
+date_var <- "2021-12-08"
+track_deaths <- county_deaths %>% filter(date == date_var) %>% mutate(death_rate = reported_deaths / population) %>% arrange(death_rate)
+```
+
+This code chunk selects only the three columns that are needed for this analysis of county characteristics. It then concatenates 06 to every fips code from the LA Times dataset. This is necessary because 06 is the California component of the code. This allows the choropleth map to be created later. Also, death rate is multiplied by 100 to turn it into the death_rate_pct. 
+
+```{r}
+viz_df <- track_deaths %>% select(county, fips, death_rate)
+viz_df$fips <- str_c("06",viz_df$fips)
+viz_df <- viz_df %>% mutate(death_rate_pct = death_rate*100)
+viz_df
+```
+
+### **How did nursing homes fare compared to the rest of the state?**  
+
+The first line of code makes a tibble called nurse_join. nurse_join is the data in nursing_totals, but the dates are filtered to be before date_var. Also, only 5 columns are selected and a new variable called deaths_total is created. The second line of code makes state_join, which is the data in state_deaths filtered to be the dates before date_var and only the columns: date, confirmed_case, and reported_deaths.  The last line left joins state_join to nurse_join by the date column.  
+
+```{r}
+nurse_join <- nursing_totals %>% filter(date <= date_var) %>% select(date, patients_confirmed_cases, staff_confirmed_cases, staff_deaths, patients_deaths) %>% mutate(deaths_total = staff_deaths + patients_deaths)
+
+state_join <- state_deaths %>% filter(date <= date_var) %>% select(date, confirmed_cases, reported_deaths)
+
+nurses_joined <- nurse_join %>% left_join(state_join, by = "date")
+nurses_joined
+```
+
+# **Part 6: Data Visualization and Modeling**  
+  
+---  
+
+
+### **How have vaccinations impacted hospitalizations in California as a whole?**
+
+The first relationship we want to examine is between hospitalizations in California and vaccinations in California. To start with, we will use the daily change in new doses of vaccines administered and the daily change in new hospitalizations. The first model will be a linear regression model of the effect of new_doses_administered on new_patients. R makes this easy because the built-in lm() function performs an ordinary least squares regression.
+
+
+
+```{r, warning=FALSE}
+
+joined_2_mod <- lm(new_patients ~ new_doses_administered , data = joined_2)
+
+joined_2 %>% ggplot(aes(x = new_doses_administered, y = new_patients)) + geom_point() + geom_abline(aes(intercept = joined_2_mod$coefficients[1], slope = joined_2_mod$coefficients[2]), color = "red", lwd = 1.3)
+
+joined_2_mod
+```
+
+Before interpreting the results, let us first check if the model works.  
+We will need to check:  
+1. If the average of the residuals equals zero  
+2. That the residuals are spread out    
+3. The residuals are independent of each other (there is no clear pattern)   
+
+If our model is working as intended, the average of the residuals should be zero.  It is comforting to see that the average_resid is approximately equal to 0. The graph also shows spread out residuals. The residual point plot's points are also not displaying a clear pattern, which makes it seem like all the residuals are independent of each other. 
+
+```{r, warning=FALSE}
+joined_2 <- joined_2 %>% add_residuals(joined_2_mod)
+joined_2 %>% summarize(average_resid = mean(resid, na.rm = TRUE))
+joined_2 %>% ggplot() + geom_density(aes(resid))
+joined_2 %>% ggplot(aes(new_doses_administered, resid)) + geom_point()
+```
+
+The equation of the line is: 
+\[newPatients = -0.0004581newDoses + 48.09746\]  
+
+This displays a negative relationship between the number of new doses and the number of new positive patients. This means that the more new doses of COVID vaccines that are administered, the less new patients there are in the hospitals.  
+
+Let us include another variable of interest into this equation. It is possible that adding the season of the year has an effect on the number of new patients in the hospitals. A season indicator could provide interesting results because date is not a factor until this point.
+
+The below graph is the same point plot as before, but the color of the points corresponds to the season indicator.
+
+```{r, warning=FALSE}
+joined_2 %>% ggplot(aes(x = new_doses_administered, y = new_patients, color = season)) + geom_point()
+```
+
+The following code chunk creates two models, one without interaction between new_doses_administered and season, and one with interaction between the two. Then, predictions for the two models are added to a data grid. A preview of the grid is printed below. It includes the model used to generate the predictions and the unique values of new_doses_administered and season together. 
+
+```{r}
+mod1 <- lm(new_patients ~ new_doses_administered + season, data = joined_2)
+mod2 <- lm(new_patients ~ new_doses_administered * season, data = joined_2)
+
+grid <- joined_2 %>% data_grid(new_doses_administered, season) %>% gather_predictions(mod1, mod2)
+head(grid)
+```
+
+Below is a useful visualization of the two models that can help decide which model is better fitted. In the first model, it can be seen that not allowing for interaction keeps the slopes constant for each season. When there is interaction between new_doses_administered and season, the slope changes for each season. The second model seems to be better for this analysis because the slope is allowed to change dramatically. The slope of summer even became steeply positive! 
+
+```{r, warning=FALSE}
+ggplot(data = joined_2, aes(new_doses_administered, new_patients, color = season)) +
+geom_point() +
+geom_line(data = grid, aes(y = pred)) +
+facet_wrap(~ model)
+```
+
+Before interpreting the better model's coefficients (the second model) let us double check that the residuals support mod2 as the better model. The residuals in mod2 seem to have a more independent relationship than the residuals in mod1. This supports mod2 as the better model. 
+
+```{r, warning=FALSE}
+joined_2_1 <- joined_2 %>% gather_residuals(mod1, mod2)
+ggplot(joined_2_1, aes(new_doses_administered, resid, col = season)) +
+geom_point() +
+facet_grid(model ~ season)
+
+```
+
+The coefficients from the model with interaction are viewable below. The sign of the predicted models are the most significant and interpretable. Summer has a positive slope, which displays that in the summer, even when the new_doses_administered increased, the new_patients admitted to the hospital for COVID increased. The other three seasons all have negative coefficients, which makes summer the most infectious season. This observation is contrary to what many may assume. 
+
+```{r, warning=FALSE}
+ggplot(joined_2) + geom_line(aes(x=date,y=new_patients))+ 
+      scale_x_date(date_breaks = "months" , date_labels = "%b-%y") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) + 
+  geom_vline(xintercept = as.Date("2020-09-22"),linetype=4, colour= "orangered2") + 
+  geom_vline(xintercept = as.Date("2020-12-22"),linetype=4, colour="dodgerblue2") + 
+  geom_vline(xintercept = as.Date("2021-03-21"),linetype=4, colour="yellow3") + 
+  geom_vline(xintercept = as.Date("2021-06-21"),linetype=4, colour="red") + 
+  geom_vline(xintercept = as.Date("2021-09-22"),linetype=4, colour="orangered2")
+```
+
+
+```{r}
+mod2
+```
+
+
+
+### **Do the counties most severely impacted by COVID-19 share any characteristics or have any opposite characteristics?**  
+
+The following code block prints a table that contains the three counties with the highest death rate, another table with the three counties with the lowest death rate, and a third table ordering every county in California by population. 
+
+```{r}
+track_deaths %>% select(date, county, population, death_rate) %>% tail(3)
+track_deaths %>% select(date, county, population, death_rate) %>% head(3)
+
+county_deaths %>% filter(date == date_var) %>% arrange(desc(population)) %>% mutate(number = row_number())
+```
+
+#### **Counties of Interest**  
+
+The counties with the three lowest death rates are Alpine, Sierra, and Mono.  
+The counties with the three highest death rates are Imperial, San Bernardino, and Los Angeles.  
+
+Examining the counties with the lowest death rates first may prove more simple.
+
+Alpine County, California is a county in eastern California within the Sierra Nevada on the state border with Nevada. Its population is 1148 people, making it the least populous county in California, and the county has a death rate of effectively zero from Covid-19. Like Alpine, Sierra is on the border with Nevada, but at a more northern location. The county has a population of 2930 people and is the second least populous county in California. The death rate of Covid-19 in Sierra is effectively zero. Mono is also a county on the border of California and Nevada and is around a hundred miles south of Alpine. Mono is the fifth least populous county in California and its death rate from covid is around 0.028%.  
+
+These three counties all share many similarities: they are three of the least populous counties in California, they are isolated in the Sierra Nevada, and they are located in the northern part of California. It seems like being isolated has helped these counties to keep the virus away from its citizens. 
+
+The county with the highest death rate from COVID-19 in California is Imperial County. Imperial county is in Southern California on the border with Mexico. It is also the 30th most populous county in California. The county with the second highest death rate is San Bernardino county. San Bernardino county is a county in southern California that borders both Arizona and Nevada. Its population of 2135413 makes it the fifth most populous county in California. The third highest death rate from Covid is from one of the most well known counties in California: Los Angeles county. LA county is the most populous county in California and is located in Southern California. 
+
+These three counties are all in Southern California, but Imperial county is much less populated than San Bernardino county and LA county. It seems that being in Southern California has a higher death rate from COVID-19 than being in Northern California. But, from just looking at the three most populous counties it is not clear whether being a more populated county has a relationship with a higher death rate from the Coronavirus.
+
+```{r}
+url <- 'https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json'
+counties <- rjson::fromJSON(file=url)
+fig <- plot_ly() 
+fig <- fig %>% add_trace(
+    type="choroplethmapbox",
+    geojson=counties,
+    locations=viz_df$fips,
+    z=viz_df$death_rate_pct,
+    #colorscale="Viridis",
+    colorscale = "Reds",
+    zmin=0,
+    zmax=0.3,
+    marker=list(line=list(
+      width=0),
+      opacity=0.5
+    )
+  )
+
+fig <- fig %>% layout(
+    mapbox=list(
+      style="carto-positron",
+      zoom =5,
+      center=list(lon= -120, lat=37.09))
+  )
+
+fig
+```
+
+The above visualization is an interactive mapbox choropleth map that displays the death rate by county. The darker the hue of red that the county is, the higher the death rate from COVID-19. The html file of this report hosted on github is at this [link](https://github.com/DestrosCMC/coronaProj). The pdf version of this report is not interactive, but the html version allows you to zoom in and out of the figure and displays the exact death rate for each fips value. This figure's shading is in line with the counties of interest that were already examined. 
+
+### **How did nursing homes fare compared to the rest of the state?**  
+
+For examining if the nursing homes fared better than the rest of the state we will look at the trends in the nursing and general case and death lines. To plot the nursing home cases and the total state cases on the same scale a second y-axis was attached to the ggplot graph. The y scale on the left side of both plots pertains to nursing home cases and deaths, while the right side pertains to the total state cases. For the cases graph, the nursing home cases are around 60,000 and the total state are around 6,000,000. 
+Even though the units are of different magnitude, the trends in relation to each other are still interpretable.  
+
+A difference in the cases and deaths graphs between the state and nursing homes is the uptick around September 2021. At around September 2021 there is a sizable visible increase in the slope of the cases and deaths curves. The patient cases and staff cases curves are practically identical at that position and they both increase less than the state overall curves. While this is an example of a difference in the curves it is also important to point out that both sets of curves, for both cases and deaths, rapidly increased together at around December 2020. Then they both stayed relatively flat until the spike in general California cases in September 2021.  
+
+It appears that when both the nursing cases and deaths and the general population cases and deaths spiked, the nursing homes and the general population fared equally well (or unwell) against COVID deaths and infections. Then, during the recent spike in the general population's infections and deaths in around September 2021, the nursing homes experienced a less extreme increase in cases and deaths.  
+
+The below code chunk plots the nursing homes cases and deaths against the California state cases and deaths. It uses a secondary axis which multiplies the units label by the coefficient. This is because the state units are divided by the coefficient so the state trend line can be close to the nursing trend line on the graph.
+
+```{r}
+coeff <- 100
+
+ggplot(nurses_joined, aes(x = date)) + geom_line(aes(y = patients_confirmed_cases, color = "Patient Cases")) + geom_line(aes(y = staff_confirmed_cases, color = 'Staff Cases')) + geom_line(aes(y = confirmed_cases/coeff, color = "Confirmed State")) +
+  
+  scale_y_continuous(
+    
+    # Features of the first axis
+    name = "Nursing Home Cases",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Total State Cases")
+  ) +
+  labs(x = "Year",
+         y = "(%)",
+         color = "Legend")
+
+```
+
+
+
+```{r, warning=FALSE}
+coeff <- 10
+
+ggplot(nurses_joined, aes(x = date)) + geom_line(aes(y = deaths_total, color = "Patient and Staff Deaths")) + geom_line(aes(y = reported_deaths/coeff, color = 'State Deaths')) +
+  
+  scale_y_continuous(
+    
+    # Features of the first axis
+    name = "Nursing Home Deaths",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Total State Deaths")
+  ) +
+  labs(x = "Year",
+         y = "(%)",
+         color = "Legend")
+```
+
+
+# **Part 7: Conclusion**  
+  
+---  
+
+#### **Question: How have vaccinations impacted hospitalizations in California as a whole?**  
+
+It seems that new vaccinations in California and new patients hospitalized with COVID-19 have a negative relationship. This means that the more new vaccinations there are in California, the fewer new patients hospitalized for COVID-19 in California. This is evident in the least squares regression of new_patients and new_doses_administered having a negative slope. This analysis is very limited in scope, there are many other secondary variables that explain part of the movement in new_patients. To try and gain more complete insight into the movement of new_patients, a season indicator was added to the analysis. This was under the hypothesis that there may be some seasonal influence in the number of new hospital cases.  The inclusion of a seasonal indicator did provide more evidence, and the model that includes interaction between season and new_doses_administered proved to be a better model than no interaction. The mod2 model displays a negative relationship between new_doses_administered and new_patients for all seasons except summer (Autumn, Winter, and Spring). While this conclusion is very interesting because many forecasted winter as being the worst season for COVID, a more comprehensive investigation is needed before the results can be fully accepted. It is possible that there is a confounding variable that changes our results dramatically. However, the hypothesis that season and new_doses_administered have an effect on the new hospital patients would be a great next investigative step.
+
+
+#### **Question: Do the counties most severely impacted by Covid-19 share any characteristics or have any opposite characteristics?**  
+
+The three counties with the lowest death rates share many similar characteristics. All three counties, Alpine, Sierra, and Mono, are some of the least populated counties in California, they are located in Northern California, and they are all isolated in the Sierra Nevada mountain range. The three counties with the highest death rates share some similar characteristics but also have some dissimilar traits. The three counties were all in Southern California but located in different geographical environments. Los Angeles borders the Pacific Ocean, contains desert, and the San Gabriel Mountains run through the county. San Bernardino County also contains the San Gabriel Mountains and desert. Imperial County contains mostly desert. Unlike Alpine, Sierra, and Mono county, the three counties with the highest death rate do not have similar geographical environments.
+
+
+
+#### **Question: How did nursing homes fare compared to the rest of the state?**  
+
+Compared to the rest of the state it seems like the nursing homes had a similar trend in the beginning of the pandemic, but the more recent spike in around September 2021 does not effect the nursing homes as much as the rest of the state. It is possible to interpret from these conclusions that nursing homes have been able to adapt since the earlier times of the virus to better protect their staff and patients. It is possible that the spike was not as deadly in the nursing homes because of vaccines in the nursing homes and stricter efforts to keep the virus out than the general state.
